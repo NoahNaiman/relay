@@ -3,7 +3,7 @@
 Resume with "continue from PROGRESS.md". Each milestone is one commit.
 
 - [x] 1. Scaffold: module, Makefile, .golangci.yml, proto + generated code, config, README skeleton, LICENSE
-- [ ] 2. Store: interface, memory, Postgres, shared contract suite
+- [x] 2. Store: interface, memory, Postgres, shared contract suite
 - [ ] 3. Store-level chaos test
 - [ ] 4. Delivery: signer/Verify, classifier, backoff, breaker, limiter
 - [ ] 5. Dispatch: dispatcher, pool, shutdown
