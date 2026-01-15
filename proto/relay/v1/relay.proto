@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package relay.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/NoahNaiman/relay/gen/relay/v1;relayv1";
+
+// RelayService registers webhook endpoints and enqueues jobs for delivery.
+service RelayService {
+  rpc RegisterEndpoint(RegisterEndpointRequest) returns (RegisterEndpointResponse);
+  rpc EnqueueJob(EnqueueJobRequest) returns (EnqueueJobResponse);
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+  rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse);
+  rpc ReplayDeadLetter(ReplayDeadLetterRequest) returns (ReplayDeadLetterResponse);
+}
+
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  JOB_STATUS_PENDING = 1;
+  JOB_STATUS_IN_FLIGHT = 2;
+  JOB_STATUS_DELIVERED = 3;
+  JOB_STATUS_DEAD = 4;
+}
+
+message Endpoint {
+  string id = 1;
+  string url = 2;
+  int32 max_rps = 3;
+  int32 max_attempts = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message Job {
+  string id = 1;
+  string endpoint_id = 2;
+  JobStatus status = 3;
+  int32 attempts = 4;
+  string last_error = 5;
+  google.protobuf.Timestamp next_attempt_at = 6;
+  string idempotency_key = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message RegisterEndpointRequest {
+  string url = 1;
+  string secret = 2;
+  // Defaults to 10 when zero.
+  int32 max_rps = 3;
+  // Defaults to 8 when zero. Must be 1-25.
+  int32 max_attempts = 4;
+}
+
+message RegisterEndpointResponse {
+  Endpoint endpoint = 1;
+}
+
+message EnqueueJobRequest {
+  string endpoint_id = 1;
+  bytes payload = 2;
+  string idempotency_key = 3;
+  map<string, string> headers = 4;
+}
+
+message EnqueueJobResponse {
+  Job job = 1;
+}
+
+message GetJobRequest {
+  string job_id = 1;
+}
+
+message GetJobResponse {
+  Job job = 1;
+}
+
+message ListDeadLettersRequest {
+  string endpoint_id = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListDeadLettersResponse {
+  repeated Job jobs = 1;
+  string next_page_token = 2;
+}
+
+message ReplayDeadLetterRequest {
+  string job_id = 1;
+}
+
+message ReplayDeadLetterResponse {
+  Job job = 1;
+}
