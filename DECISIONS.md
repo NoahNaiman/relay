@@ -18,3 +18,5 @@ One line each: decision — reason — alternative rejected.
 - Migrations take `pg_advisory_xact_lock` — several instances may start at once — relying on `CREATE TABLE IF NOT EXISTS`.
 - Postgres tests create a fresh database per test from `RELAY_TEST_DATABASE_URL` or one testcontainers container per package — isolation without TRUNCATE ordering issues — one shared schema.
 - With Colima, testcontainers needs `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock` — Colima has no `/var/run/docker.sock` on the host — writing `~/.testcontainers.properties`.
+- Store chaos test asserts only on *provably* stale writes (the job's lease token changed before the write) and counts other rejections separately — any other notion of "stale" races between goroutines — asserting on every lease-expired write.
+- Oversleeping completions run in their own goroutine — keeps 5% oversleeps from serializing a worker's batch and blowing the 30s budget — sleeping inline.
