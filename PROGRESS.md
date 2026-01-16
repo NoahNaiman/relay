@@ -6,7 +6,7 @@ Resume with "continue from PROGRESS.md". Each milestone is one commit.
 - [x] 2. Store: interface, memory, Postgres, shared contract suite
 - [x] 3. Store-level chaos test
 - [x] 4. Delivery: signer/Verify, classifier, backoff, breaker, limiter
-- [ ] 5. Dispatch: dispatcher, pool, shutdown
+- [x] 5. Dispatch: dispatcher, pool, shutdown
 - [ ] 6. End-to-end chaos test
 - [ ] 7. API + server
 - [ ] 8. Demo (docker-compose, scripts/demo.sh)

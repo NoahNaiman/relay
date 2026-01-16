@@ -27,3 +27,8 @@ One line each: decision — reason — alternative rejected.
 - The rate limiter uses `ReserveN` with the injected clock; if the wait exceeds a max (set by the dispatcher) the job is rescheduled without an attempt — keeps workers from sleeping on one slow endpoint and stays testable — `Limiter.Wait` with real time.
 - Job headers cannot override `Relay-*`, `Content-Length` or `Host`; `Content-Type` defaults to `application/json` but can be overridden — a job must not be able to forge its signature — allowing any header.
 - Non-2xx, non-4xx, non-5xx statuses (e.g. 3xx; redirects are followed by the client first) are permanent — the spec's table lists only 2xx/4xx/5xx — retrying them.
+- The worker pool is a semaphore of size `RELAY_WORKERS` with one goroutine per claimed job, and the dispatcher claims only as many jobs as there are free slots — leases are never held for jobs waiting in a queue — fixed worker goroutines reading from a buffered channel.
+- Deliveries cut short by the shutdown deadline (or a limiter wait) release the lease without counting an attempt — the receiver did not fail — counting it as a retry.
+- `Dispatcher.Kill()` simulates a crash by suppressing all further store writes — the memory store ignores contexts, so a canceled context alone would not stop writes — killing a subprocess.
+- Metrics are reported through a `dispatch.Observer` interface — keeps Prometheus out of the dispatch package and tests — calling Prometheus directly.
+- `relay_deliveries_total{result}` reports the job's resulting state, so a final retry that exhausts `max_attempts` counts as `dead` — matches what operators see in the store — labelling by classifier verdict.
