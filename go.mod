@@ -7,6 +7,7 @@ require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
+	golang.org/x/time v0.16.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )

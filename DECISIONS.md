@@ -20,3 +20,10 @@ One line each: decision — reason — alternative rejected.
 - With Colima, testcontainers needs `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock` — Colima has no `/var/run/docker.sock` on the host — writing `~/.testcontainers.properties`.
 - Store chaos test asserts only on *provably* stale writes (the job's lease token changed before the write) and counts other rejections separately — any other notion of "stale" races between goroutines — asserting on every lease-expired write.
 - Oversleeping completions run in their own goroutine — keeps 5% oversleeps from serializing a worker's batch and blowing the 30s budget — sleeping inline.
+- Backoff `attempt` is the number of attempts made before the failing one, so the first retry draws from `[0, base]` — matches `base·2^attempt` with a 0-based attempt — 1-based (first retry up to 2·base).
+- `Retry-After` accepts delay-seconds only; HTTP-dates are ignored and normal backoff applies — the spec says "in seconds" — parsing HTTP-dates.
+- The breaker counts only retryable failures; permanent 4xx neither trip nor reset it (a half-open probe ending in 4xx is released) — a 404 for one job says nothing about endpoint health — counting 4xx as failures.
+- While half-open with a probe in flight, other jobs are rescheduled to now+cooldown — the spec defines only the open-state reschedule time — busy-polling.
+- The rate limiter uses `ReserveN` with the injected clock; if the wait exceeds a max (set by the dispatcher) the job is rescheduled without an attempt — keeps workers from sleeping on one slow endpoint and stays testable — `Limiter.Wait` with real time.
+- Job headers cannot override `Relay-*`, `Content-Length` or `Host`; `Content-Type` defaults to `application/json` but can be overridden — a job must not be able to forge its signature — allowing any header.
+- Non-2xx, non-4xx, non-5xx statuses (e.g. 3xx; redirects are followed by the client first) are permanent — the spec's table lists only 2xx/4xx/5xx — retrying them.
