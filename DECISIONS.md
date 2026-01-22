@@ -32,3 +32,6 @@ One line each: decision — reason — alternative rejected.
 - `Dispatcher.Kill()` simulates a crash by suppressing all further store writes — the memory store ignores contexts, so a canceled context alone would not stop writes — killing a subprocess.
 - Metrics are reported through a `dispatch.Observer` interface — keeps Prometheus out of the dispatch package and tests — calling Prometheus directly.
 - `relay_deliveries_total{result}` reports the job's resulting state, so a final retry that exhausts `max_attempts` counts as `dead` — matches what operators see in the store — labelling by classifier verdict.
+- The e2e chaos test spreads jobs over 4 endpoints with `max_rps=5000` — at the default 10 rps one endpoint would need 200s, far over the 60s budget — raising the default.
+- The e2e chaos test sets `RELAY_REQUEST_TIMEOUT=1s` and `RELAY_POLL_INTERVAL=20ms` in addition to the spec's lease/backoff/cooldown — config validation requires timeout < lease (2s) — weakening validation.
+- The e2e chaos receiver verifies every signature with `delivery.Verify` and fails the test on any mismatch — checks signing end to end for free — trusting the unit tests alone.
