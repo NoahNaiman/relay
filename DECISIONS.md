@@ -35,3 +35,11 @@ One line each: decision — reason — alternative rejected.
 - The e2e chaos test spreads jobs over 4 endpoints with `max_rps=5000` — at the default 10 rps one endpoint would need 200s, far over the 60s budget — raising the default.
 - The e2e chaos test sets `RELAY_REQUEST_TIMEOUT=1s` and `RELAY_POLL_INTERVAL=20ms` in addition to the spec's lease/backoff/cooldown — config validation requires timeout < lease (2s) — weakening validation.
 - The e2e chaos receiver verifies every signature with `delivery.Verify` and fails the test on any mismatch — checks signing end to end for free — trusting the unit tests alone.
+- Prometheus metrics live in `internal/metrics` on a private registry (plus Go/process collectors) — testable without global state — the default global registry.
+- `RegisterEndpoint` requires a non-empty secret — every delivery is HMAC-signed, so an empty key would make signatures meaningless — allowing it.
+- `EnqueueJob` rejects header names that are not RFC 9110 tokens, values with CR/LF/NUL, and more than 50 headers — such jobs would fail every attempt — accepting them and letting them die.
+- `ListDeadLetters` returns `NotFound` for an unknown endpoint, clamps `page_size` to 500 and defaults it to 50 — distinguishes typos from empty queues — returning an empty list.
+- Page tokens are base64url(`<unix nanos>:<uuid>`), opaque to clients — simplest encoding of the keyset — signed or encrypted tokens.
+- Internal errors return `codes.Internal` with a generic message and log the detail — avoids leaking database errors to clients — passing errors through.
+- The server retries the Postgres connection for up to 30s at startup — Postgres may still be booting under docker compose — failing immediately.
+- Shutdown order: gRPC GracefulStop, then the dispatcher drain (≤15s), then HTTP, then the store — `/metrics` and `/readyz` stay up while deliveries drain — stopping everything at once.
