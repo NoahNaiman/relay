@@ -43,3 +43,9 @@ One line each: decision — reason — alternative rejected.
 - Internal errors return `codes.Internal` with a generic message and log the detail — avoids leaking database errors to clients — passing errors through.
 - The server retries the Postgres connection for up to 30s at startup — Postgres may still be booting under docker compose — failing immediately.
 - Shutdown order: gRPC GracefulStop, then the dispatcher drain (≤15s), then HTTP, then the store — `/metrics` and `/readyz` stay up while deliveries drain — stopping everything at once.
+- `go.mod` declares `go 1.26.0` — the lowest version the current grpc, x/time and x/text releases accept — the spec's floor of 1.22, which those releases no longer support.
+- One Docker image (alpine, non-root) contains all four binaries; compose picks one via `entrypoint` — one build for the whole demo — an image per command. Alpine over distroless so healthchecks can use `wget`.
+- `scripts/demo.sh` runs `democlient` inside the relay container with `docker compose exec` — works with only Docker on the host — requiring Go on the host for the demo.
+- The demo's flaky endpoint uses `max_attempts=2` — with the default 8 and a 30% failure rate, dead letters would almost never appear — a third always-failing receiver.
+- The demo receivers share a fixed, clearly labelled demo HMAC secret in `docker-compose.yml` — the demo must work with no setup — generating one per run.
+- The receiver acknowledges duplicates with 204 but does not reprocess them, and exposes `/stats` — demonstrates receiver-side dedupe for at-least-once delivery — rejecting duplicates with an error.

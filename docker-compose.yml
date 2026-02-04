@@ -1,0 +1,65 @@
+# Demo stack: Postgres, relay, a healthy receiver and a flaky receiver.
+# The shared secret below is a demo value, not a credential.
+x-demo-secret: &demo-secret
+  RECEIVER_SECRET: demo-secret-not-for-production
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: relay
+      POSTGRES_DB: relay
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay -d relay"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  relay:
+    build: .
+    image: relay:dev
+    environment:
+      <<: *demo-secret
+      RELAY_DATABASE_URL: postgres://relay:relay@postgres:5432/relay?sslmode=disable
+      RELAY_METRICS_INTERVAL: 1s
+    ports:
+      - "9090:9090"
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    stop_grace_period: 20s
+
+  receiver-healthy:
+    image: relay:dev
+    entrypoint: ["/app/receiver"]
+    environment: *demo-secret
+    ports:
+      - "8081:8081"
+    depends_on:
+      relay:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
+      interval: 2s
+      retries: 30
+
+  receiver-flaky:
+    image: relay:dev
+    entrypoint: ["/app/receiver", "--fail-rate", "0.3", "--max-latency", "500ms"]
+    environment: *demo-secret
+    ports:
+      - "8082:8081"
+    depends_on:
+      relay:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
+      interval: 2s
+      retries: 30
