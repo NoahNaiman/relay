@@ -53,3 +53,6 @@ One line each: decision — reason — alternative rejected.
 - The delivery HTTP transport keeps `RELAY_WORKERS` idle connections per host — Go's default of 2 made workers open a connection per request, exhausting ephemeral ports at ~14k requests to one host, which tripped breakers and stalled jobs for the 30s cooldown (found by the load test; regression test added) — the default transport.
 - Breaker transitions are logged at WARN — an open breaker silently delays every job for an endpoint, which hid the bug above at the default log level — INFO.
 - Load test defaults: 20,000 jobs at 2,000/s, 512 B payloads, 4 endpoints, loadgen receiving the webhooks itself — measures true enqueue→delivery latency on one machine — an external receiver.
+- CI enforces the 80% coverage gate in the `test` job, where Docker lets the Postgres store tests run; locally without Docker the same measure is 69.7% because `internal/store/postgres` cannot run — gating only on memory-store coverage.
+- CI also regenerates protobuf code and fails on any diff — guarantees the committed generated code matches `relay.proto` — trusting contributors to run `make proto`.
+- CI actions are pinned to major versions (`checkout@v4`, `setup-go@v5`, `golangci-lint-action@v8`) — conventional for a small project — pinning commit SHAs.

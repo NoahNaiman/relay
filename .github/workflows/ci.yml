@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go vet
+        run: go vet ./... && go vet -tags chaos ./...
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+      - name: generated code is up to date
+        run: |
+          go install github.com/bufbuild/buf/cmd/buf@latest
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+          make proto
+          git diff --exit-code -- gen/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Docker is available on the runner, so the Postgres contract suite runs
+      # through testcontainers here as well.
+      - name: go test -race
+        run: go test -race -count=1 ./...
+      - name: coverage (internal/store, internal/delivery, internal/dispatch >= 80%)
+        run: ./scripts/coverage.sh 80
+
+  chaos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: chaos tests (memory store)
+        run: make chaos
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: relay
+          POSTGRES_PASSWORD: relay
+          POSTGRES_DB: relay
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U relay -d relay"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      RELAY_TEST_PG: "1"
+      RELAY_TEST_DATABASE_URL: postgres://relay:relay@localhost:5432/relay?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Postgres contract suite
+        run: go test -race -count=1 -v ./internal/store/postgres/
+      - name: chaos tests (Postgres)
+        run: make chaos

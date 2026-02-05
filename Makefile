@@ -1,7 +1,6 @@
 GO        ?= go
 GOBIN     := $(shell $(GO) env GOPATH)/bin
 PKGS      := ./...
-COVERPKGS := ./internal/store/...,./internal/delivery/...,./internal/dispatch/...
 
 .PHONY: build test lint proto up down demo chaos loadtest cover
 
@@ -13,8 +12,7 @@ test:
 	$(GO) test -race $(PKGS)
 
 cover:
-	$(GO) test -race -coverpkg=$(COVERPKGS) -coverprofile=coverage.out ./internal/... ./test/...
-	$(GO) tool cover -func=coverage.out | tail -1
+	./scripts/coverage.sh 80
 
 lint:
 	$(GOBIN)/golangci-lint run
