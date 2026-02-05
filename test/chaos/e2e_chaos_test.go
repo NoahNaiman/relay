@@ -34,7 +34,11 @@ func TestEndToEndChaos(t *testing.T) {
 		instances   = 3
 		failureRate = 0.30
 		killEvery   = 500 * time.Millisecond
-		budget      = 60 * time.Second
+		// Per endpoint, per instance. Paces the run to several seconds so that
+		// many crashes land mid-delivery: 3 instances x 4 endpoints x 50 rps.
+		maxRPS   = 50
+		minKills = 5
+		budget   = 60 * time.Second
 	)
 	seed := uint64(time.Now().UnixNano())
 	t.Logf("seed=%d", seed)
@@ -95,7 +99,7 @@ func TestEndToEndChaos(t *testing.T) {
 		path := "/hook/" + string(rune('a'+i))
 		secret := uuid.NewString()
 		secretByEP[path] = secret
-		ep, err := s.CreateEndpoint(ctx, store.Endpoint{URL: srv.URL + path, Secret: secret, MaxRPS: 5000, MaxAttempts: 8})
+		ep, err := s.CreateEndpoint(ctx, store.Endpoint{URL: srv.URL + path, Secret: secret, MaxRPS: maxRPS, MaxAttempts: 8})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -189,8 +193,8 @@ func TestEndToEndChaos(t *testing.T) {
 	if badSigs.Load() != 0 {
 		t.Errorf("%d requests failed signature verification", badSigs.Load())
 	}
-	if kills == 0 {
-		t.Error("no instances were killed; chaos went untested")
+	if kills < minKills {
+		t.Errorf("only %d instances were killed, want at least %d; chaos went untested", kills, minKills)
 	}
 	lost := jobs - delivered - dead
 	if lost != 0 {

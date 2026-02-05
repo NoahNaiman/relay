@@ -10,10 +10,11 @@ Resume with "continue from PROGRESS.md". Each milestone is one commit.
 - [x] 6. End-to-end chaos test
 - [x] 7. API + server
 - [x] 8. Demo (docker-compose, scripts/demo.sh)
-- [ ] 9. Load test
+- [x] 9. Load test
 - [ ] 10. CI
 - [ ] 11. README
 
 ## Environment notes
 - Go 1.27.4 installed via Homebrew; Docker provided by Colima (Docker 29.5.2).
 - Docker Compose comes from Homebrew; `~/.docker/config.json` was given `cliPluginsExtraDirs: ["/opt/homebrew/lib/docker/cli-plugins"]` so `docker compose` works.
+- Load test (milestone 9) found two dispatcher bugs, both fixed with regression tests: the poll loop throttled to one claim per 200ms when `Workers < BatchSize`, and the default HTTP transport exhausted ephemeral ports, tripping breakers. Raw results are in the README.

@@ -117,26 +117,39 @@ func New(s store.Store, cfg Config, opts ...Option) *Dispatcher {
 		cfg.MaxLimiterWait = time.Second
 	}
 	d := &Dispatcher{
-		store:      s,
-		cfg:        cfg,
-		clock:      clock.Real{},
-		log:        slog.New(slog.DiscardHandler),
-		obs:        nopObserver{},
-		httpClient: &http.Client{},
+		store: s,
+		cfg:   cfg,
+		clock: clock.Real{},
+		log:   slog.New(slog.DiscardHandler),
+		obs:   nopObserver{},
 	}
 	for _, o := range opts {
 		o(d)
+	}
+	if d.httpClient == nil {
+		d.httpClient = &http.Client{Transport: newTransport(cfg.Workers)}
 	}
 	d.killCtx, d.kill = context.WithCancel(context.Background())
 	d.sender = &delivery.Sender{Client: d.httpClient, Clock: d.clock, Timeout: cfg.RequestTimeout}
 	d.breakers = delivery.NewBreakers(cfg.BreakerThreshold, cfg.BreakerCooldown, d.clock,
 		func(id uuid.UUID, s delivery.BreakerState) {
-			d.log.Info("breaker state changed", "endpoint_id", id, "state", s.String())
+			d.log.Warn("breaker state changed", "endpoint_id", id, "state", s.String())
 			d.obs.BreakerChanged(id, s != delivery.Closed)
 		})
 	d.limiters = delivery.NewLimiters(d.clock)
 	d.policy = Policy{Backoff: delivery.Backoff{Base: cfg.BackoffBase, Cap: cfg.BackoffCap, Rand: d.rand}}
 	return d
+}
+
+// newTransport keeps enough idle connections for every worker to reuse one.
+// Go's default of 2 idle connections per host makes busy workers open and
+// close a connection per request, which exhausts ephemeral ports (TIME_WAIT)
+// at a few thousand requests per second to a single host.
+func newTransport(workers int) *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConnsPerHost = workers
+	t.MaxIdleConns = max(100, 4*workers)
+	return t
 }
 
 // Kill simulates a crash: Run returns promptly and no further results are
@@ -145,15 +158,16 @@ func New(s store.Store, cfg Config, opts ...Option) *Dispatcher {
 func (d *Dispatcher) Kill() { d.kill() }
 
 // Run claims and delivers jobs until ctx is canceled, then shuts down
-// gracefully: it stops claiming, waits up to ShutdownTimeout for in-flight
-// deliveries, cancels the rest and releases their leases (pending, due now).
+// gracefully: it stops claiming, releases claimed jobs that have not started,
+// waits up to ShutdownTimeout for in-flight deliveries, then cancels the rest
+// and releases their leases (pending, due now).
+//
+// Workers goroutines read from a prefetch buffer of BatchSize claimed jobs.
+// The buffer is refilled in batches once it is at least half empty, so claims
+// stay batched under load while concurrency stays bounded by Workers.
 func (d *Dispatcher) Run(ctx context.Context) error {
 	deliverCtx, cancelDeliveries := context.WithCancel(d.killCtx)
 	defer cancelDeliveries()
-
-	sem := make(chan struct{}, d.cfg.Workers)
-	var wg sync.WaitGroup
-	d.log.Info("dispatcher started", "workers", d.cfg.Workers, "lease", d.cfg.Lease.String())
 
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -165,47 +179,60 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 		}
 	}()
 
+	queue := make(chan store.Claimed, d.cfg.BatchSize)
+	room := make(chan struct{}, 1) // signaled whenever a worker takes a job
+	var wg sync.WaitGroup
+	for range d.cfg.Workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for c := range queue {
+				select {
+				case room <- struct{}{}:
+				default:
+				}
+				d.deliver(deliverCtx, c)
+			}
+		}()
+	}
+	d.log.Info("dispatcher started", "workers", d.cfg.Workers, "batch_size", d.cfg.BatchSize, "lease", d.cfg.Lease.String())
+
+	refillAt := max(1, d.cfg.BatchSize/2)
 	for runCtx.Err() == nil {
-		// Block until at least one worker is free, then take as many free
-		// slots as are available, up to the batch size.
-		select {
-		case sem <- struct{}{}:
-		case <-runCtx.Done():
+		free := cap(queue) - len(queue)
+		if free < refillAt {
+			select {
+			case <-room:
+			case <-runCtx.Done():
+			}
 			continue
 		}
-		slots := 1
-		for slots < d.cfg.BatchSize {
-			select {
-			case sem <- struct{}{}:
-				slots++
-				continue
-			default:
-			}
-			break
-		}
-
-		claimed, err := d.store.Claim(runCtx, slots, d.cfg.Lease)
+		claimed, err := d.store.Claim(runCtx, free, d.cfg.Lease)
 		if err != nil && runCtx.Err() == nil {
 			d.log.Error("claim failed", "err", err)
 		}
-		for range slots - len(claimed) {
-			<-sem
-		}
 		for _, c := range claimed {
-			wg.Add(1)
-			go func() {
-				defer func() { <-sem; wg.Done() }()
-				d.deliver(deliverCtx, c)
-			}()
+			queue <- c // never blocks: only this loop sends, and it claimed at most `free`
 		}
-		if len(claimed) == slots && slots == d.cfg.BatchSize {
-			continue // a full batch: there is probably more work, poll immediately
+		if len(claimed) > 0 && len(claimed) == free {
+			continue // a full batch: there is probably more work, claim again right away
 		}
 		select {
 		case <-time.After(d.cfg.PollInterval):
 		case <-runCtx.Done():
 		}
 	}
+
+	// Jobs still buffered never started: give them back immediately.
+	for drained := false; !drained; {
+		select {
+		case c := <-queue:
+			d.release(d.log.With("job_id", c.Job.ID), c.Job)
+		default:
+			drained = true
+		}
+	}
+	close(queue)
 
 	if d.killCtx.Err() != nil {
 		return ErrKilled

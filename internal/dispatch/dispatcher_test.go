@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -545,4 +546,109 @@ type failingCompleteStore struct {
 func (f *failingCompleteStore) Complete(context.Context, uuid.UUID, uuid.UUID, store.Result) (store.Status, error) {
 	f.calls.Add(1)
 	return "", errors.New("write failed: " + strconv.Itoa(int(f.calls.Load())))
+}
+
+// Regression test: with fewer workers than the batch size, a claim that fills
+// every free slot must not wait for the next poll tick. Before the fix this
+// delivered one claim's worth of jobs per PollInterval (about 25s here).
+func TestBusyQueueDoesNotWaitForPollTick(t *testing.T) {
+	f := newFixture(t, clock.Real{})
+	rc := newReceiver(t, status(http.StatusOK))
+	cfg := testConfig()
+	cfg.Workers, cfg.BatchSize = 2, 32
+	cfg.PollInterval = time.Second
+	ep := f.endpoint(rc.URL, 1000, 8)
+	var ids []uuid.UUID
+	for range 50 {
+		ids = append(ids, f.enqueue(ep))
+	}
+	start := time.Now()
+	f.start(cfg)
+	for _, id := range ids {
+		f.waitStatus(id, store.StatusDelivered)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("50 jobs took %s; a busy queue is waiting for poll ticks", took)
+	}
+}
+
+func TestShutdownReleasesBufferedJobsImmediately(t *testing.T) {
+	f := newFixture(t, clock.Real{})
+	arrived := make(chan struct{}, 10)
+	unblock := make(chan struct{})
+	rc := newReceiver(t, func(_ int64, w http.ResponseWriter, r *http.Request) {
+		arrived <- struct{}{}
+		select {
+		case <-unblock:
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	t.Cleanup(func() { close(unblock) })
+	cfg := testConfig()
+	cfg.Workers, cfg.BatchSize = 1, 4
+	cfg.ShutdownTimeout = 300 * time.Millisecond
+	ep := f.endpoint(rc.URL, 100, 8)
+	var ids []uuid.UUID
+	for range 3 {
+		ids = append(ids, f.enqueue(ep))
+	}
+	_, stop := f.start(cfg)
+	<-arrived // one job is in flight; the other two wait in the buffer
+
+	done := make(chan error, 1)
+	go func() { done <- stop() }()
+	f.waitFor("buffered jobs released before the in-flight deadline", func() bool {
+		released := 0
+		for _, id := range ids {
+			if j := f.job(id); j.Status == store.StatusPending && j.LeaseToken == uuid.Nil {
+				released++
+			}
+		}
+		return released == 2
+	})
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if j := f.job(id); j.Status != store.StatusPending || j.Attempts != 0 {
+			t.Fatalf("every unfinished job should end pending with no attempt counted: %+v", j)
+		}
+	}
+	if len(arrived) != 0 {
+		t.Fatal("buffered jobs must not be delivered after shutdown begins")
+	}
+}
+
+// Regression test: connections must be reused across deliveries to the same
+// host. With Go's default of 2 idle connections per host, 8 busy workers open
+// a new connection for most requests and eventually exhaust ephemeral ports.
+func TestConnectionsAreReused(t *testing.T) {
+	f := newFixture(t, clock.Real{})
+	var conns atomic.Int64
+	rc := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	rc.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	rc.Start()
+	t.Cleanup(rc.Close)
+	cfg := testConfig()
+	cfg.Workers, cfg.BatchSize = 8, 16
+	ep := f.endpoint(rc.URL, 100000, 8)
+	var ids []uuid.UUID
+	for range 400 {
+		ids = append(ids, f.enqueue(ep))
+	}
+	f.start(cfg)
+	for _, id := range ids {
+		f.waitStatus(id, store.StatusDelivered)
+	}
+	if n := conns.Load(); n > int64(2*cfg.Workers) {
+		t.Fatalf("400 deliveries opened %d connections; want at most %d (one per worker, with slack)", n, 2*cfg.Workers)
+	}
 }
