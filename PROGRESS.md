@@ -12,10 +12,19 @@ Resume with "continue from PROGRESS.md". Each milestone is one commit.
 - [x] 8. Demo (docker-compose, scripts/demo.sh)
 - [x] 9. Load test
 - [x] 10. CI
-- [ ] 11. README
+- [x] 11. README
 
 ## Environment notes
 - Go 1.27.4 installed via Homebrew; Docker provided by Colima (Docker 29.5.2).
 - Docker Compose comes from Homebrew; `~/.docker/config.json` was given `cliPluginsExtraDirs: ["/opt/homebrew/lib/docker/cli-plugins"]` so `docker compose` works.
 - Load test (milestone 9) found two dispatcher bugs, both fixed with regression tests: the poll loop throttled to one claim per 200ms when `Workers < BatchSize`, and the default HTTP transport exhausted ephemeral ports, tripping breakers. Raw results are in the README.
 - CI workflow is written and its YAML parses, and every command it runs was run locally; it has not run on GitHub yet because the repo has no remote.
+
+## Definition of done
+- [x] `make test` passes with no Docker and no network (verified with an unreachable `DOCKER_HOST` and `GOPROXY=off`; Postgres tests skip with a message).
+- [x] `make chaos` runs both chaos tests, and both pass with 0 lost jobs (memory and `RELAY_TEST_PG=1`).
+- [x] `make up && make demo` shows delivered, retried and dead-lettered jobs; `/metrics` reflects them.
+- [x] Coverage >= 80% across `internal/store`, `internal/delivery` and `internal/dispatch`: 86.2% with Docker available (69.7% without Docker, since the Postgres store cannot run).
+- [x] Every number in the README is real and shown with its command and machine specs.
+
+All milestones are complete.
